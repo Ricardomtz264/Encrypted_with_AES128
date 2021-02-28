@@ -6,6 +6,7 @@
 #include <string.h> // CBC mode, for memset
 #include "board.h"
 #include "fsl_crc.h"
+
 /*
 static void InitCrc32(CRC_Type *base, uint32_t seed)
 {

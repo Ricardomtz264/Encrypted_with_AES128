@@ -57,7 +57,7 @@
 /*******************************************************************************
  * Prototypes
  ******************************************************************************/
-void test_task(void *arg);
+void Server_task(void *arg);
 
 /*******************************************************************************
  * Variables
@@ -117,7 +117,7 @@ int main(void)
 
     //tcpecho_init();
 
-    sys_thread_new("test_task", test_task, NULL, 1024, 3);
+    sys_thread_new("Server_task", Server_task, NULL, 1024, 3);
 
     vTaskStartScheduler();
 
@@ -135,16 +135,57 @@ int main(void)
  */
 
 
-void test_task(void *arg)
+void Server_task(void *arg)
 {
-	aescrc_Enc();
-	Server();
-	//server_accept();
-	//recived_data();
-	//aescrc_Dec();
+	struct netconn *conn, *newconn;
+	err_t err;
+	LWIP_UNUSED_ARG(arg);
 
-	PRINTF("AES and CRC test task\r\n");
+	//************************************
+	//       Create New Connection
+	//************************************
+	conn = netconn_new(NETCONN_TCP);
+	netconn_bind(conn, IP_ADDR_ANY, 7);
+	netconn_listen(conn);
+
+	while (1) {
+	//************************************
+	//       Accept Connection
+	//************************************
+	err = netconn_accept(conn, &newconn);
+	PRINTF("accepted new connection \r\n");
+
+	if (err == ERR_OK) {
+	  struct netbuf *buf;
+	  void *data;
+	  u16_t len;
+		//************************************
+		//       Revive Data
+		//************************************
+	  while ((err = netconn_recv(newconn, &buf)) == ERR_OK) {
+
+		do {
+			 netbuf_data(buf, &data, &len);
+			 //netconn_send(newconn, &buf);
+			 decrypt(data, len, newconn, &buf);
+			 err = netconn_write(newconn, data, len, NETCONN_COPY);
+	#if 0
+			if (err != ERR_OK) {
+			  printf("tcpecho: netconn_write: error \"%s\"\n", lwip_strerr(err));
+			}
+	#endif
+		} while (netbuf_next(buf) >= 0);
+		netbuf_delete(buf);
+	  }
+		//************************************
+		//       Close the Connection
+		//************************************
+	  netconn_close(newconn);
+	  netconn_delete(newconn);
+	}
+	}
 }
+
 static void InitCrc32(CRC_Type *base, uint32_t seed)
 {
     crc_config_t config;
@@ -172,9 +213,9 @@ server_accept(void *arg)
   struct netconn *conn, *newconn;
   err_t err;
   LWIP_UNUSED_ARG(arg);
-
-  /* Create a new connection identifier. */
-  /* Bind connection to well known port number 7. */
+	//************************************
+	//       Create New Connection
+	//************************************
 #if LWIP_IPV6
   conn = netconn_new(NETCONN_TCP_IPV6);
   netconn_bind(conn, IP6_ADDR_ANY, 7);
@@ -184,7 +225,9 @@ server_accept(void *arg)
 #endif /* LWIP_IPV6 */
   LWIP_ERROR("tcpecho: invalid conn", (conn != NULL), return;);
 
-  /* Tell connection to go into listening mode. */
+	//************************************
+	//       Accept Connection
+	//************************************
   netconn_listen(conn);
   err = netconn_accept(conn, &newconn);
   PRINTF("accepted new connection %p\r\n", newconn);
@@ -198,6 +241,9 @@ recived_data(void *arg)
 	struct netbuf *buf;
 	void *data;
 	u16_t len;
+	//************************************
+	//       Revive Data
+	//************************************
 	PRINTF("accepted new connection %p\r\n", newconn);
 	while ((err = netconn_recv(newconn, &buf)) == ERR_OK) {
 		PRINTF("\n Recived \r\n");
@@ -212,7 +258,7 @@ recived_data(void *arg)
 }
 
 
-void aescrc_Enc(void *arg)
+void encrypt(void *arg)
 {
 
 	struct AES_ctx ctx;
@@ -256,7 +302,7 @@ void aescrc_Enc(void *arg)
 
 }
 
-void aescrc_Dec(uint8_t *data, uint8_t *len,uint8_t *newconn,uint8_t *buf)
+void decrypt(uint8_t *data, uint8_t *len,uint8_t *newconn,uint8_t *buf)
 {
 	CRC_Type *base = CRC0;
 	uint32_t checksum32;
@@ -288,7 +334,7 @@ void aescrc_Dec(uint8_t *data, uint8_t *len,uint8_t *newconn,uint8_t *buf)
     PRINTF("Received CRC-32: 0x%08x\r\n", rev_crc);
 
     // Print only the data
-	PRINTF("Received Data Encrypted Message: %d\r\n");
+	PRINTF("Received Data Encrypted Message: ");
 	for(int i=0; i<rev_data_enc_len; i++) {
 		PRINTF("0x%02x,", rev_data_enc[i]);
 	}
@@ -321,7 +367,7 @@ void aescrc_Dec(uint8_t *data, uint8_t *len,uint8_t *newconn,uint8_t *buf)
 	AES_ECB_decrypt(&ctx, rev_data_enc);
 	//AES_CBC_decrypt_buffer(&ctx, rev_data_enc, rev_data_enc_len);
 
-	PRINTF("\r\nDecryption by AES128: %d\r\n", rev_data_enc);
+	PRINTF("\r\nDecryption by AES128: ");
 	for(int i=0; i<rev_data_enc_len; i++) {
 		PRINTF("0x%02x,", rev_data_enc[i]);
 	}
@@ -330,52 +376,3 @@ void aescrc_Dec(uint8_t *data, uint8_t *len,uint8_t *newconn,uint8_t *buf)
 
 }
 
-
-
-Server(void *arg)
-{
-  struct netconn *conn, *newconn;
-  err_t err;
-  LWIP_UNUSED_ARG(arg);
-
-  conn = netconn_new(NETCONN_TCP);
-  netconn_bind(conn, IP_ADDR_ANY, 7);
-  //LWIP_ERROR("tcpecho: invalid conn", (conn != NULL), return;);
-
-  /* Tell connection to go into listening mode. */
-  netconn_listen(conn);
-
-  while (1) {
-
-    /* Grab new connection. */
-    err = netconn_accept(conn, &newconn);
-    PRINTF("accepted new connection %p\r\n", newconn);
-
-    /* Process the new connection. */
-    if (err == ERR_OK) {
-      struct netbuf *buf;
-      void *data;
-      u16_t len;
-
-      while ((err = netconn_recv(newconn, &buf)) == ERR_OK) {
-
-        do {
-             netbuf_data(buf, &data, &len);
-             //netconn_send(newconn, &buf);
-             aescrc_Dec(data, len, newconn, &buf);
-             err = netconn_write(newconn, data, len, NETCONN_COPY);
-#if 0
-            if (err != ERR_OK) {
-              printf("tcpecho: netconn_write: error \"%s\"\n", lwip_strerr(err));
-            }
-#endif
-        } while (netbuf_next(buf) >= 0);
-        netbuf_delete(buf);
-      }
-      /*printf("Got EOF, looping\n");*/
-      /* Close connection and discard connection identifier. */
-      netconn_close(newconn);
-      netconn_delete(newconn);
-    }
-  }
-}
